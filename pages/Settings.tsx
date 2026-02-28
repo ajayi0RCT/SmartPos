@@ -28,7 +28,11 @@ import {
   Briefcase,
   Building2,
   Plus,
-  Trash2
+  Trash2,
+  Download,
+  Upload,
+  RefreshCw,
+  FileText
 } from 'lucide-react';
 import { AppState, SettingHistoryEntry, PaymentAccount } from '../types';
 import { GoogleGenAI } from "@google/genai";
@@ -41,6 +45,9 @@ interface Props {
   onUpdateConfig: (newConfig: Partial<AppState['config']>, section: string, details: string) => void;
   onUpdateAccount: (newAccount: Partial<AppState['businessAccount']>) => void;
   onUpdatePaymentAccounts: (accounts: PaymentAccount[]) => void;
+  onRestoreState: (state: AppState) => void;
+  onClearHistory: () => void;
+  onViewReports: () => void;
 }
 
 interface ChatMessage {
@@ -48,10 +55,43 @@ interface ChatMessage {
   text: string;
 }
 
-const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpdateCurrency, onUpdateConfig, onUpdateAccount, onUpdatePaymentAccounts }) => {
+// Fixed SectionCard to be a standalone component to resolve children prop typing issues
+interface SectionCardProps {
+  section: string;
+  icon: React.ComponentType<{ size?: number | string }>;
+  title: string;
+  children: React.ReactNode;
+  onViewHistory: (section: string) => void;
+}
+
+const SectionCard: React.FC<SectionCardProps> = ({ section, icon: Icon, title, children, onViewHistory }) => (
+  <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm relative group overflow-hidden h-fit">
+    <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center gap-3">
+        <div className="p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 rounded-xl">
+          <Icon size={20} />
+        </div>
+        <h4 className="font-bold text-lg">{title}</h4>
+      </div>
+      <button 
+        onClick={() => onViewHistory(section)}
+        className="p-2 text-slate-400 hover:text-indigo-600 transition-colors bg-slate-50 dark:bg-slate-700/50 rounded-lg"
+        title={`View history for ${title}`}
+      >
+        <History size={16} />
+      </button>
+    </div>
+    <div className="space-y-4">
+      {children}
+    </div>
+  </div>
+);
+
+const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpdateCurrency, onUpdateConfig, onUpdateAccount, onUpdatePaymentAccounts, onRestoreState, onClearHistory, onViewReports }) => {
   const [historySection, setHistorySection] = useState<string | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   
   // AI Chat states
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -149,30 +189,52 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
     onUpdatePaymentAccounts(state.paymentAccounts.filter(a => a.id !== id));
   };
 
-  const filteredHistory = state.settingsHistory.filter(h => !historySection || h.section === historySection);
+  const handleBackup = () => {
+    const dataStr = JSON.stringify(state, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = `realinkpos_backup_${new Date().toISOString().split('T')[0]}.json`;
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
 
-  const SectionCard = ({ section, icon: Icon, title, children }: { section: string, icon: any, title: string, children: React.ReactNode }) => (
-    <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm relative group overflow-hidden h-fit">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 rounded-xl">
-            <Icon size={20} />
-          </div>
-          <h4 className="font-bold text-lg">{title}</h4>
-        </div>
-        <button 
-          onClick={() => setHistorySection(section)}
-          className="p-2 text-slate-400 hover:text-indigo-600 transition-colors bg-slate-50 dark:bg-slate-700/50 rounded-lg"
-          title={`View history for ${title}`}
-        >
-          <History size={16} />
-        </button>
-      </div>
-      <div className="space-y-4">
-        {children}
-      </div>
-    </div>
-  );
+  const handleRestore = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const newState = JSON.parse(content) as AppState;
+        
+        // Basic validation
+        if (!newState.products || !newState.sales || !newState.config) {
+          throw new Error("Invalid backup file format");
+        }
+
+        if (window.confirm("Are you sure you want to restore this data? This will overwrite all current data including sales, inventory, and settings.")) {
+          setIsRestoring(true);
+          // Simulate a bit of loading for better UX
+          setTimeout(() => {
+            onRestoreState(newState);
+            setIsRestoring(false);
+            alert("Data restored successfully!");
+          }, 1500);
+        }
+      } catch (err) {
+        alert("Failed to restore data: Invalid or corrupted backup file.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    event.target.value = '';
+  };
+
+  const filteredHistory = state.settingsHistory.filter(h => !historySection || h.section === historySection);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 duration-500 pb-20">
@@ -197,7 +259,7 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Business Account Section */}
-        <SectionCard section="Account" icon={Briefcase} title="Business Account">
+        <SectionCard section="Account" icon={Briefcase} title="Business Account" onViewHistory={setHistorySection}>
           <div className="space-y-4">
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Registered Entity Name</label>
@@ -215,7 +277,7 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
         </SectionCard>
 
         {/* Payment Accounts Section */}
-        <SectionCard section="Payments" icon={Building2} title="Accepted Accounts">
+        <SectionCard section="Payments" icon={Building2} title="Accepted Accounts" onViewHistory={setHistorySection}>
           <div className="space-y-3">
             {state.paymentAccounts.map(account => (
               <div key={account.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-2xl flex items-center justify-between group/account">
@@ -270,22 +332,62 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
         </SectionCard>
 
         {/* Branding Section */}
-        <SectionCard section="Branding" icon={Palette} title="Store Branding">
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Display Name</label>
-            <input type="text" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl font-bold text-sm outline-none" value={state.config.storeName} onChange={(e) => onUpdateConfig({ storeName: e.target.value }, 'Branding', `Name changed to ${e.target.value}`)} />
+        <SectionCard section="Branding" icon={Palette} title="Store Branding" onViewHistory={setHistorySection}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Display Name</label>
+              <input type="text" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl font-bold text-sm outline-none" value={state.config.storeName} onChange={(e) => onUpdateConfig({ storeName: e.target.value }, 'Branding', `Name changed to ${e.target.value}`)} />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Theme Accent</label>
+              <div className="flex items-center gap-3">
+                <input type="color" className="w-12 h-10 p-1 bg-white border rounded-lg cursor-pointer" value={state.config.primaryColor} onChange={(e) => onUpdateConfig({ primaryColor: e.target.value }, 'Branding', `Theme color updated to ${e.target.value}`)} />
+                <span className="font-mono text-xs text-slate-500 uppercase">{state.config.primaryColor}</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Theme Accent</label>
-            <div className="flex items-center gap-3">
-              <input type="color" className="w-12 h-10 p-1 bg-white border rounded-lg cursor-pointer" value={state.config.primaryColor} onChange={(e) => onUpdateConfig({ primaryColor: e.target.value }, 'Branding', `Theme color updated to ${e.target.value}`)} />
-              <span className="font-mono text-xs text-slate-500 uppercase">{state.config.primaryColor}</span>
+        </SectionCard>
+
+        {/* Invoice Customization Section */}
+        <SectionCard section="Invoice" icon={FileText} title="Invoice Customization" onViewHistory={setHistorySection}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invoice Theme</label>
+              <select 
+                className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl font-bold text-sm outline-none"
+                value={state.config.invoiceTheme}
+                onChange={(e) => onUpdateConfig({ invoiceTheme: e.target.value as any }, 'Invoice', `Theme changed to ${e.target.value}`)}
+              >
+                <option value="classic">Classic (Professional)</option>
+                <option value="modern">Modern (Clean)</option>
+                <option value="minimal">Minimalist</option>
+                <option value="compact">Compact (Retail)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Typography Style</label>
+              <select 
+                className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl font-bold text-sm outline-none"
+                value={state.config.invoiceStyle}
+                onChange={(e) => onUpdateConfig({ invoiceStyle: e.target.value as any }, 'Invoice', `Style changed to ${e.target.value}`)}
+              >
+                <option value="sans">Sans Serif (Modern)</option>
+                <option value="serif">Serif (Elegant)</option>
+                <option value="mono">Monospace (Technical)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invoice Accent Color</label>
+              <div className="flex items-center gap-3">
+                <input type="color" className="w-12 h-10 p-1 bg-white border rounded-lg cursor-pointer" value={state.config.invoiceColor} onChange={(e) => onUpdateConfig({ invoiceColor: e.target.value }, 'Invoice', `Invoice color updated to ${e.target.value}`)} />
+                <span className="font-mono text-xs text-slate-500 uppercase">{state.config.invoiceColor}</span>
+              </div>
             </div>
           </div>
         </SectionCard>
 
         {/* Regional Section */}
-        <SectionCard section="Regional" icon={Globe} title="Regional & Currency">
+        <SectionCard section="Regional" icon={Globe} title="Regional & Currency" onViewHistory={setHistorySection}>
           <div>
             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">System Currency</label>
             <div className="relative">
@@ -312,7 +414,7 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
         </SectionCard>
 
         {/* Sync Section */}
-        <SectionCard section="Cloud" icon={Cloud} title="Sync & Cloud">
+        <SectionCard section="Cloud" icon={Cloud} title="Sync & Cloud" onViewHistory={setHistorySection}>
           <div>
             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Provider</label>
             <select className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-700 border rounded-xl font-bold text-sm" value={state.config.cloudProvider} onChange={(e) => onUpdateConfig({ cloudProvider: e.target.value as any }, 'Cloud', `Cloud provider changed to ${e.target.value}`)}>
@@ -348,7 +450,7 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
                   <div className={`p-2 rounded-xl h-fit ${m.role === 'assistant' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100'}`}>
                     {m.role === 'assistant' ? <Bot size={16}/> : <User size={16}/>}
                   </div>
-                  <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${m.role === 'assistant' ? 'bg-slate-50 dark:bg-slate-900/40' : 'bg-indigo-600 text-white shadow-md'}`}>
+                  <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${m.role === 'assistant' ? 'bg-slate-50 dark:bg-slate-900/40' : 'bg-indigo-600 text-white shadow-md'}`}>
                     {m.text}
                   </div>
                 </div>
@@ -382,7 +484,7 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
         </div>
 
         {/* Notifications Section */}
-        <SectionCard section="Notifications" icon={Bell} title="Alert Thresholds">
+        <SectionCard section="Notifications" icon={Bell} title="Alert Thresholds" onViewHistory={setHistorySection}>
           <div className="space-y-4">
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Global Low Stock Alert</label>
@@ -401,6 +503,69 @@ const SettingsPage: React.FC<Props> = ({ state, isDarkMode, setIsDarkMode, onUpd
                <p className="text-[10px] text-amber-700 dark:text-amber-400 font-bold leading-relaxed uppercase tracking-tight">
                  System logic: Broadcasts "Stock Alerts" and visual warnings on Dashboard & Inventory when quantity falls below this value.
                </p>
+            </div>
+          </div>
+        </SectionCard>
+
+        {/* Data Management Section */}
+        <SectionCard section="System" icon={Database} title="Data Management" onViewHistory={setHistorySection}>
+          <div className="space-y-4">
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-700">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Business Intelligence</p>
+              <button 
+                onClick={onViewReports}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm"
+              >
+                <History size={16} className="text-indigo-600" />
+                View Full Reports
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-700">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Local Backup</p>
+              <button 
+                onClick={handleBackup}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm"
+              >
+                <Download size={16} className="text-indigo-600" />
+                Export Data (.json)
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-700">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Restore System</p>
+              <label className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg cursor-pointer">
+                {isRestoring ? (
+                  <RefreshCw size={16} className="animate-spin" />
+                ) : (
+                  <Upload size={16} />
+                )}
+                {isRestoring ? 'Restoring...' : 'Import Backup File'}
+                <input 
+                  type="file" 
+                  accept=".json" 
+                  className="hidden" 
+                  onChange={handleRestore}
+                  disabled={isRestoring}
+                />
+              </label>
+            </div>
+
+            <div className="p-3 bg-rose-50 dark:bg-rose-900/20 rounded-xl border border-rose-100 dark:border-rose-900/30 flex items-start gap-2">
+              <AlertTriangle size={14} className="text-rose-500 shrink-0 mt-0.5" />
+              <p className="text-[9px] text-rose-700 dark:text-rose-400 font-bold leading-tight uppercase">
+                Warning: Restoring data will permanently delete all current records. Always export a backup before importing.
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <button 
+                onClick={onClearHistory}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded-xl font-bold text-sm hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-all border border-rose-100 dark:border-rose-800"
+              >
+                <Trash2 size={16} />
+                Clear All History
+              </button>
             </div>
           </div>
         </SectionCard>

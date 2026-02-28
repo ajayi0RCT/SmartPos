@@ -1,7 +1,5 @@
 {
-  "name": "SmartPOS Offline",
+  "name": "RealinkPos Offline",
   "description": "A powerful, secure, and offline-first Point of Sale system with stock control, service management, and cloud sync capabilities.",
-  "requestFramePermissions": [
-    "camera"
-  ]
+  "requestFramePermissions": []
 }

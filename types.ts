@@ -146,10 +146,17 @@ export interface AppState {
   isDarkMode: boolean;
   syncStatus: 'online' | 'offline' | 'syncing';
   adminUser: AdminUser;
+  user?: {
+    email: string;
+    name: string;
+    picture: string;
+  };
   businessAccount: {
     name: string;
     address: string;
     phone: string;
+    logo?: string;
+    signature?: string;
   };
   config: {
     storeName: string;
@@ -159,6 +166,11 @@ export interface AppState {
     receiptFooter: string;
     cloudProvider: 'gdrive' | 'dropbox' | 's3';
     enhancedSecurity: boolean;
+    nextInvoiceNumber: number;
+    invoiceTheme: 'classic' | 'modern' | 'minimal' | 'compact';
+    invoiceColor: string;
+    invoiceStyle: 'serif' | 'sans' | 'mono';
+    lastSelectedCustomerId?: string;
   };
   currency: {
     code: string;

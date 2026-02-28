@@ -28,9 +28,10 @@ import {
 
 interface Props {
   state: AppState;
+  user?: AppState['user'];
 }
 
-const Dashboard: React.FC<Props> = ({ state }) => {
+const Dashboard: React.FC<Props> = ({ state, user }) => {
   const symbol = state.currency.symbol;
   const threshold = state.config.lowStockThreshold;
   const totalSalesAmount = state.sales.reduce((acc, sale) => acc + sale.total, 0);
@@ -74,6 +75,11 @@ const Dashboard: React.FC<Props> = ({ state }) => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-2xl font-black tracking-tight">Hello, {user?.name || state.adminUser.name}!</h2>
+        <p className="text-slate-500 text-sm font-medium">Here's what's happening with {state.config.storeName} today.</p>
+      </div>
+
       {/* Metrics Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, idx) => (
@@ -115,12 +121,22 @@ const Dashboard: React.FC<Props> = ({ state }) => {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                <YAxis axisLine={false} tickLine={false} />
+                <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `${symbol}${val}`} />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }}
                   itemStyle={{ color: '#fff' }}
+                  formatter={(value: number) => [`${symbol}${value.toLocaleString()}`, 'Revenue']}
+                  labelStyle={{ fontWeight: 'black', marginBottom: '4px' }}
                 />
-                <Area type="monotone" dataKey="sales" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                <Area 
+                  type="monotone" 
+                  dataKey="sales" 
+                  stroke="#6366f1" 
+                  strokeWidth={3} 
+                  fillOpacity={1} 
+                  fill="url(#colorSales)"
+                  activeDot={{ r: 6, strokeWidth: 0 }}
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -151,7 +167,11 @@ const Dashboard: React.FC<Props> = ({ state }) => {
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }}
                     itemStyle={{ color: '#fff' }}
-                    formatter={(value: number) => [`${symbol}${value.toLocaleString()}`, 'Total Revenue']}
+                    formatter={(value: number, name: string, props: any) => {
+                      const totalValue = categorySalesData.reduce((acc, curr) => acc + curr.value, 0);
+                      const percent = ((value / totalValue) * 100).toFixed(1);
+                      return [`${symbol}${value.toLocaleString()} (${percent}%)`, name];
+                    }}
                   />
                   <Legend verticalAlign="bottom" height={36}/>
                 </PieChart>

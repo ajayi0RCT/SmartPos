@@ -19,9 +19,13 @@ import {
   Box,
   Check,
   ListFilter,
-  Layers
+  Layers,
+  Zap,
+  TrendingUp,
+  AlertTriangle,
+  ArrowRight
 } from 'lucide-react';
-import { Product, Category, Brand, StockHistoryEntry, SettingHistoryEntry, AppState } from '../types';
+import { Product, Category, Brand, StockHistoryEntry, SettingHistoryEntry, AppState, Sale } from '../types';
 
 interface Props {
   products: Product[];
@@ -34,11 +38,13 @@ interface Props {
   onLogAudit: (section: string, action: string, details: string) => void;
   history: SettingHistoryEntry[];
   config: AppState['config'];
+  // Added state to Props for analytics access
+  state: AppState;
 }
 
 type StockStatus = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock';
 
-const Inventory: React.FC<Props> = ({ products, categories, brands, onUpdate, onUpdateCategories, onUpdateBrands, symbol, onLogAudit, history, config }) => {
+const Inventory: React.FC<Props> = ({ products, categories, brands, onUpdate, onUpdateCategories, onUpdateBrands, symbol, onLogAudit, history, config, state }) => {
   const [filter, setFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockStatus, setStockStatus] = useState<StockStatus>('all');
@@ -49,11 +55,47 @@ const Inventory: React.FC<Props> = ({ products, categories, brands, onUpdate, on
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newBrandName, setNewBrandName] = useState('');
 
   const [localStockAdjustments, setLocalStockAdjustments] = useState<Record<string, number>>({});
+
+  // Analytics Calculation
+  const inventoryAnalytics = useMemo(() => {
+    const productSales: Record<string, number> = {};
+    
+    // Aggregate units sold from all sales
+    state.sales.forEach(sale => {
+      sale.items.forEach(item => {
+        productSales[item.productId] = (productSales[item.productId] || 0) + item.quantity;
+      });
+    });
+
+    const analyzed = products.map(p => {
+      const totalSold = productSales[p.id] || 0;
+      // Turnover = Sold / (Stock + Sold) - Simple ratio for current snapshot
+      const turnoverRatio = totalSold / (p.stock + totalSold || 1);
+      
+      // Suggested Reorder Point: 
+      // Rule: (Sold / 10) + buffer if high velocity, else use global threshold
+      const suggestedReorder = Math.max(config.lowStockThreshold, Math.ceil(totalSold * 0.2));
+
+      return {
+        ...p,
+        totalSold,
+        turnoverRatio,
+        suggestedReorder,
+        isFrequentlyOut: totalSold > 5 && p.stock <= 0,
+        isHighTurnover: totalSold > 10 || turnoverRatio > 0.5
+      };
+    });
+
+    return analyzed.sort((a, b) => b.totalSold - a.totalSold);
+  }, [products, state.sales, config.lowStockThreshold]);
+
+  const highPriorityItems = inventoryAnalytics.filter(p => p.isFrequentlyOut || (p.stock < p.suggestedReorder && p.totalSold > 0));
 
   const initialForm = {
     name: '',
@@ -205,6 +247,13 @@ const Inventory: React.FC<Props> = ({ products, categories, brands, onUpdate, on
         </div>
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           <button 
+            onClick={() => setShowAnalytics(!showAnalytics)}
+            className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl font-bold text-xs transition-all border-2 ${showAnalytics ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-700 text-slate-500'}`}
+          >
+            <TrendingUp size={16} />
+            Stock Analytics
+          </button>
+          <button 
             onClick={() => setShowCategoryModal(true)}
             className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-2.5 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-xs hover:border-indigo-500 transition-all"
           >
@@ -220,6 +269,92 @@ const Inventory: React.FC<Props> = ({ products, categories, brands, onUpdate, on
           </button>
         </div>
       </div>
+
+      {/* Stock Velocity & Turnover Analytics Section */}
+      {showAnalytics && (
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 p-6 md:p-8 rounded-[2rem] text-white shadow-2xl animate-in slide-in-from-top-4 duration-500 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
+            <Zap size={240} />
+          </div>
+          
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 relative z-10">
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <div className="p-2 bg-indigo-500 rounded-lg"><Zap size={20} className="text-white" /></div>
+                <h3 className="text-2xl font-black tracking-tight">Stock Velocity Analysis</h3>
+              </div>
+              <p className="text-indigo-200 text-sm font-medium">Identifying high-turnover items and suggesting reorder levels</p>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="text-center px-6 py-3 bg-white/10 rounded-2xl backdrop-blur-md">
+                <p className="text-[10px] font-black uppercase text-indigo-300 mb-1">Critical Restocks</p>
+                <p className="text-xl font-black">{highPriorityItems.length}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative z-10">
+            {highPriorityItems.length === 0 ? (
+              <div className="col-span-full py-12 text-center bg-white/5 rounded-3xl border border-white/10">
+                <Check className="mx-auto mb-2 text-emerald-400" size={32} />
+                <p className="font-bold text-indigo-100 uppercase tracking-widest text-xs">All high-turnover items are adequately stocked</p>
+              </div>
+            ) : (
+              highPriorityItems.slice(0, 6).map(item => (
+                <div key={item.id} className="bg-white/10 backdrop-blur-md border border-white/10 p-5 rounded-3xl flex flex-col gap-4 group hover:bg-white/15 transition-all">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img src={item.image} className="w-10 h-10 rounded-xl object-cover border border-white/20" alt="" />
+                      <div className="min-w-0">
+                        <p className="font-bold text-sm truncate">{item.name}</p>
+                        <p className="text-[10px] text-indigo-300 font-black uppercase tracking-tighter">{item.category}</p>
+                      </div>
+                    </div>
+                    {item.isFrequentlyOut ? (
+                      <span className="flex items-center gap-1 bg-rose-500 text-white text-[9px] font-black px-2 py-1 rounded-lg uppercase animate-pulse">
+                        <AlertTriangle size={10} /> Out of Stock
+                      </span>
+                    ) : (
+                      <span className="bg-indigo-500 text-white text-[9px] font-black px-2 py-1 rounded-lg uppercase">
+                        High Velocity
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-indigo-200">
+                      <span>Recent Sales</span>
+                      <span>Stock Level</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-white/10 h-2 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full ${item.isFrequentlyOut ? 'bg-rose-500' : 'bg-emerald-500'}`} 
+                          style={{ width: `${Math.min(100, (item.stock / item.suggestedReorder) * 100)}%` }}
+                        ></div>
+                      </div>
+                      <span className="text-xs font-black">{item.stock} / {item.suggestedReorder}</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                    <div>
+                      <p className="text-[9px] font-black uppercase text-indigo-400">Target Reorder Point</p>
+                      <p className="text-sm font-black text-emerald-400">{item.suggestedReorder} Units</p>
+                    </div>
+                    <button 
+                      onClick={() => handleOpenModal(item)}
+                      className="p-2 bg-white/10 hover:bg-indigo-600 rounded-xl transition-all"
+                    >
+                      <ArrowRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main Content Actions */}
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">

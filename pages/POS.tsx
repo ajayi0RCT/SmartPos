@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, 
   Trash2, 
@@ -20,29 +20,52 @@ import {
   Banknote,
   Download,
   Building2,
-  ChevronRight
+  ChevronRight,
+  AlertTriangle
 } from 'lucide-react';
 import { AppState, Product, Sale, SaleItem, PaymentAccount } from '../types';
+import { numberToWords } from '../utils/numberToWords';
 
 interface Props {
   state: AppState;
   onAddSale: (sale: Sale) => void;
   onUpdateProducts: (products: Product[]) => void;
   onLogAudit: (section: string, action: string, details: string) => void;
+  onUpdateConfig: (newConfig: Partial<AppState['config']>, section: string, details: string) => void;
 }
 
-const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }) => {
+const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit, onUpdateConfig }) => {
   const symbol = state.currency.symbol;
   const [search, setSearch] = useState('');
-  const [cart, setCart] = useState<SaleItem[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState(state.customers[0]);
+  const [cart, setCart] = useState<SaleItem[]>(() => {
+    const saved = localStorage.getItem('pos_draft_cart');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [selectedCustomer, setSelectedCustomer] = useState(() => {
+    const saved = localStorage.getItem('pos_draft_customer');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return state.customers.find(c => c.id === parsed.id) || state.customers[0];
+    }
+    return state.customers[0];
+  });
   const [showCheckout, setShowCheckout] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showModuleAudit, setShowModuleAudit] = useState(false);
+  const [showTransactionHistory, setShowTransactionHistory] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'bank_transfer'>('cash');
   const [selectedBank, setSelectedBank] = useState<PaymentAccount | null>(null);
+
+  // Auto-save draft
+  useEffect(() => {
+    localStorage.setItem('pos_draft_cart', JSON.stringify(cart));
+  }, [cart]);
+
+  useEffect(() => {
+    localStorage.setItem('pos_draft_customer', JSON.stringify(selectedCustomer));
+  }, [selectedCustomer]);
 
   // Quick Add Form State
   const [quickAddForm, setQuickAddForm] = useState({
@@ -84,9 +107,15 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
   };
 
   const updateQuantity = (productId: string, delta: number) => {
+    const product = state.products.find(p => p.id === productId);
     setCart(prev => prev.map(item => {
       if (item.productId === productId) {
         const newQty = Math.max(1, item.quantity + delta);
+        // Check if new quantity exceeds stock
+        if (product && newQty > product.stock) {
+           alert(`Cannot exceed available stock (${product.stock})`);
+           return item;
+        }
         return { ...item, quantity: newQty, total: newQty * item.price };
       }
       return item;
@@ -129,6 +158,7 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
     onAddSale(sale);
     setLastSale(sale);
     setCart([]);
+    localStorage.removeItem('pos_draft_cart');
     setShowCheckout(false);
     setShowReceipt(true);
     // Reset state for next sale
@@ -195,7 +225,7 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
               placeholder="Search products by name or SKU..."
               className="w-full pl-12 pr-4 py-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shadow-sm"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.value || (e.target as HTMLInputElement).value)}
             />
           </div>
           <button 
@@ -207,11 +237,19 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
             <span className="hidden lg:inline">Quick Add</span>
           </button>
           <button 
+            onClick={() => setShowTransactionHistory(true)}
+            className="px-6 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 rounded-2xl flex items-center gap-2 font-bold hover:text-indigo-600 transition-all shadow-sm"
+            title="Recent Transactions"
+          >
+            <HistoryIcon size={20} />
+            <span className="hidden lg:inline">History</span>
+          </button>
+          <button 
             onClick={() => setShowModuleAudit(true)}
             className="px-6 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 rounded-2xl flex items-center gap-2 font-bold hover:text-indigo-600 transition-all shadow-sm"
             title="POS Sale History"
           >
-            <HistoryIcon size={20} />
+            <Check size={20} />
             <span className="hidden lg:inline">Activity</span>
           </button>
         </div>
@@ -253,7 +291,11 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
           </div>
           <div className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl">
             <User size={20} className="text-slate-400" />
-            <select className="bg-transparent text-sm font-semibold flex-1 outline-none" value={selectedCustomer.id} onChange={(e) => setSelectedCustomer(state.customers.find(c => c.id === e.target.value)!)}>
+            <select className="bg-transparent text-sm font-semibold flex-1 outline-none" value={selectedCustomer.id} onChange={(e) => {
+              const customer = state.customers.find(c => c.id === e.target.value)!;
+              setSelectedCustomer(customer);
+              onUpdateConfig({ lastSelectedCustomerId: customer.id }, 'POS', `Selected customer ${customer.name} for AI analysis`);
+            }}>
               {state.customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
@@ -265,26 +307,43 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
               <p className="text-sm font-medium">Your cart is empty</p>
             </div>
           ) : (
-            cart.map(item => (
-              <div key={item.productId} className="flex gap-4 p-2 rounded-xl border border-transparent hover:border-slate-100 dark:hover:border-slate-700 transition-all">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <h5 className="font-semibold text-sm truncate pr-2">{item.name}</h5>
-                    <button onClick={() => removeFromCart(item.productId)} className="text-slate-400 hover:text-rose-500">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold" style={{ color: state.config.primaryColor }}>{symbol}{item.total.toLocaleString()}</p>
-                    <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-700 rounded-lg px-2 py-1">
-                      <button onClick={() => updateQuantity(item.productId, -1)} className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><Minus size={12} /></button>
-                      <span className="text-xs font-bold min-w-[20px] text-center">{item.quantity}</span>
-                      <button onClick={() => updateQuantity(item.productId, 1)} className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><Plus size={12} /></button>
+            cart.map(item => {
+              const product = state.products.find(p => p.id === item.productId);
+              const isLowStock = product && product.stock < state.config.lowStockThreshold;
+              
+              return (
+                <div key={item.productId} className="flex gap-4 p-3 rounded-2xl border border-slate-100 dark:border-slate-700 hover:border-indigo-200 dark:hover:border-indigo-900/40 transition-all bg-white dark:bg-slate-800/50 group">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <h5 className="font-bold text-sm truncate pr-2">{item.name}</h5>
+                      <button 
+                        onClick={() => removeFromCart(item.productId)} 
+                        className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-all"
+                        title="Remove from cart"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <p className="text-xs font-black" style={{ color: state.config.primaryColor }}>{symbol}{item.total.toLocaleString()}</p>
+                        {isLowStock && (
+                          <div className="flex items-center gap-1 mt-1 text-amber-600 dark:text-amber-500 animate-pulse">
+                            <AlertTriangle size={12} />
+                            <span className="text-[10px] font-bold uppercase tracking-tight">Low Stock Alert ({product.stock})</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-700 rounded-xl px-2.5 py-1.5">
+                        <button onClick={() => updateQuantity(item.productId, -1)} className="p-1 hover:bg-white dark:hover:bg-slate-600 rounded-lg shadow-sm transition-all"><Minus size={14} /></button>
+                        <span className="text-sm font-black min-w-[24px] text-center">{item.quantity}</span>
+                        <button onClick={() => updateQuantity(item.productId, 1)} className="p-1 hover:bg-white dark:hover:bg-slate-600 rounded-lg shadow-sm transition-all"><Plus size={14} /></button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
         <div className="p-6 bg-slate-50 dark:bg-slate-700/30 border-t border-slate-200 dark:border-slate-700 space-y-3">
@@ -404,7 +463,7 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
           <div className="bg-white dark:bg-slate-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <HistoryIcon className="text-indigo-600" size={24} style={{ color: state.config.primaryColor }} />
+                <Check className="text-indigo-600" size={24} style={{ color: state.config.primaryColor }} />
                 <h3 className="font-bold text-xl">POS Sales Audit Log</h3>
               </div>
               <button onClick={() => setShowModuleAudit(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"><X size={20} /></button>
@@ -427,6 +486,70 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTransactionHistory && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 max-h-[80vh] flex flex-col">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <HistoryIcon className="text-indigo-600" size={24} style={{ color: state.config.primaryColor }} />
+                <h3 className="font-bold text-xl">Transaction History</h3>
+              </div>
+              <button onClick={() => setShowTransactionHistory(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 bg-slate-50 dark:bg-slate-900 z-10">
+                  <tr>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Date</th>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Customer</th>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Items</th>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                  {state.sales.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-20 text-center text-slate-400 italic">No transactions found.</td>
+                    </tr>
+                  ) : (
+                    [...state.sales].reverse().map((sale) => {
+                      const customer = state.customers.find(c => c.id === sale.customerId);
+                      return (
+                        <tr key={sale.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                          <td className="p-4">
+                            <p className="text-xs font-bold">{new Date(sale.date).toLocaleDateString()}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">{new Date(sale.date).toLocaleTimeString()}</p>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold">
+                                {customer?.name.charAt(0)}
+                              </div>
+                              <span className="text-xs font-bold">{customer?.name || 'Unknown'}</span>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-1">
+                              {sale.items.map(i => i.name).join(', ')}
+                            </p>
+                            <p className="text-[10px] font-bold text-slate-400">{sale.items.length} items</p>
+                          </td>
+                          <td className="p-4 text-right">
+                            <span className="text-sm font-black" style={{ color: state.config.primaryColor }}>
+                              {symbol}{sale.total.toLocaleString()}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -580,6 +703,9 @@ const POS: React.FC<Props> = ({ state, onAddSale, onUpdateProducts, onLogAudit }
                   <div className="flex justify-between text-[11px] font-black">
                     <span>TOTAL:</span>
                     <span className="text-indigo-600">{symbol}{lastSale.total.toLocaleString()}</span>
+                  </div>
+                  <div className="text-[8px] font-bold text-slate-500 uppercase mt-1">
+                    Amount in words: {numberToWords(lastSale.total)} {state.currency.code} Only
                   </div>
                 </div>
 
